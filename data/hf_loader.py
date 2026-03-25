@@ -74,8 +74,8 @@ def load_chexpert(
 # ──────────────────────────────────────────────
 
 def get_image(ds, idx: int = 0) -> Image.Image:
-    """Extract a single image as BW PIL from the dataset."""
-    return ds[idx]["main_image"].convert("L")
+    """Extract a single image as RGB PIL from the dataset."""
+    return ds[idx]["main_image"].convert("RGB")
 
 def get_text(ds, idx: int = 0) -> str:
     """Extract the report text for a given image."""

@@ -6,7 +6,7 @@ class CheXpertDataset(Dataset):
     PyTorch Dataset for CheXpert+ findings or impression subset.
 
     Each item returns:
-        image: PIL Image in grayscale (L mode)
+        image: PIL Image in grayscale (RGB mode)
         text:  Report text (findings or impression)
     """
     def __init__(self, subset: str = "findings", split: str = "valid"):
