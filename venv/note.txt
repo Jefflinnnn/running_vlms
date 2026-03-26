@@ -1,0 +1,7 @@
+I am running on RTX 6000pro, which ran into an issue when building off requirements.
+
+I needed to run:
+
+ uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+ 
+to install the nightly builds since the GPU is so new. This may not be a problem for you.   
