@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-from hf_loader import hf_login, load_chexpert, get_sample
+from data.hf_loader import hf_login, load_chexpert, get_sample
 
 class CheXpertDataset(Dataset):
     """
