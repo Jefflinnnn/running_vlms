@@ -29,6 +29,18 @@ sys.path.insert(0, str(MEDVERSA_SNAPSHOT))
 # re-implemented from scratch using their original logic.
 # Sigh...
 
+# Needed to patch their original code from
+# self.llama_tokenizer.pad_token = 0
+# to 
+# self.llama_tokenizer.pad_token = self.llama_tokenizer.unk_token
+# in  C:\Users\AICD3_4\.cache\huggingface\hub\models--hyzhou--MedVersa\snapshots\23c7cd57626d299e2639cb2ec1ebae07acf818e6\medomni\models\medomni.py 
+# as llama does not support 0 as the token 
+
+
+# More Patches
+import unittest.mock
+sys.modules['ipdb'] = unittest.mock.MagicMock()
+
 import torch
 import transformers.modeling_utils as _mu
 import transformers.pytorch_utils as _pu
@@ -90,6 +102,7 @@ if not hasattr(_mu, "prune_conv1d_layer"):
 # Default Values
 # ──────────────────────────────────────────────
 
+
 DEFAULT_CONTEXT = "Age: unknown.\nGender: unknown.\nIndication: unknown.\nComparison: None."
 
 DEFAULT_PARAMS = {
@@ -127,6 +140,9 @@ class MedVersa(BaseVLM):
         from utils import registry
         model_cls = registry.get_model_class("medomni")
         self.model = model_cls.from_pretrained(self.MODEL_ID).to(self.device).eval()
+        if self.model.llama_tokenizer.pad_token is None:
+            print("#" * 100)
+            self.model.llama_tokenizer.pad_token = "<pad>"
         print("MedVersa loaded.")
 
     def _build_context(self, context: dict | None) -> str:
@@ -165,45 +181,59 @@ class MedVersa(BaseVLM):
         prompt: str = "How would you characterize the findings from <img0>?",
         context: dict | None = None,
         **kwargs,
-    ) -> str:
-        """
-        Generate a radiology report for a given image and prompt.
+        ) -> str:
+        import utils as medversa_utils
 
-        Args:
-            image:    PIL Image in RGB format.
-            prompt:   Text prompt. Use <img0> to reference the image.
-            context:  Optional dict with patient metadata keys:
-                      'age', 'gender', 'indication', 'comparison'.
-                      Falls back to DEFAULT_CONTEXT if None.
-            **kwargs: Override DEFAULT_PARAMS generation parameters.
+        # Patch out segmentation — not needed for report generation and causes errors since the MedVersa snapshot's seg utils expect different input formats and are not robust to unexpected inputs. Detection is also patched out just in case, since it relies on seg outputs.
+        original_task_seg_2d    = medversa_utils.task_seg_2d
+        original_task_seg_3d    = medversa_utils.task_seg_3d
+        original_seg_2d_process = medversa_utils.seg_2d_process
+        original_seg_3d_process = medversa_utils.seg_3d_process
+        original_det_2d_process = medversa_utils.det_2d_process
+        original_det_3d_process = getattr(medversa_utils, "det_3d_process", None)
 
-        Returns:
-            Generated report text as a string.
-        """
-        from utils import generate_predictions
+        medversa_utils.task_seg_2d    = lambda *args, **kwargs: None
+        medversa_utils.task_seg_3d    = lambda *args, **kwargs: None
+        medversa_utils.seg_2d_process = lambda *args, **kwargs: (None, None)
+        medversa_utils.seg_3d_process = lambda *args, **kwargs: (None, None)
+        medversa_utils.det_2d_process = lambda *args, **kwargs: None
+        if original_det_3d_process:
+            medversa_utils.det_3d_process = lambda *args, **kwargs: None
 
-        # MedVersa expects file paths, save PIL image to a temp file
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             image.save(tmp.name)
-            image_path = tmp.name
+            image_path = tmp.name.replace("\\", "/")
+
         try:
             context_str = self._build_context(context)
             params = {**DEFAULT_PARAMS, **kwargs}
-
-            _, _, output_text = generate_predictions(
+            seg_mask_2d, seg_mask_3d, output_text = medversa_utils.generate_predictions(
                 self.model,
                 [image_path],
                 context_str,
                 prompt,
                 "cxr",
                 "report generation",
-                self.device,    # positional, must come before **params
-                **params,
+                params["num_beams"],
+                params["do_sample"],
+                params["min_length"],
+                params["top_p"],
+                params["repetition_penalty"],
+                params["length_penalty"],
+                params["temperature"],
+                self.device,
             )
         except Exception as e:
             print(f"Error occurred: {e}")
-
+            raise
         finally:
+            medversa_utils.task_seg_2d    = original_task_seg_2d
+            medversa_utils.task_seg_3d    = original_task_seg_3d
+            medversa_utils.seg_2d_process = original_seg_2d_process
+            medversa_utils.seg_3d_process = original_seg_3d_process
+            medversa_utils.det_2d_process = original_det_2d_process
+            if original_det_3d_process:
+                medversa_utils.det_3d_process = original_det_3d_process
             Path(image_path).unlink(missing_ok=True)
 
         return output_text
